@@ -31,39 +31,24 @@ module ReportBuilder
         output: '#007fff'
     }
 
-    #
-    # @param [Hash] options override the default and configured options.
-    #
-    # Ex: options = {
-    #       json_path:    'cucumber_sample/logs',
-    #       report_path:  'my_test_report',
-    #       report_types: ['json', 'html'],
-    #       report_tabs:  [ 'overview', 'features', 'scenarios', 'errors'],
-    #       report_title: 'My Test Results',
-    #       compress_images: false,
-    #       additional_info: {'browser' => 'Chrome', 'environment' => 'Stage 5'}
-    #     }
-    #
-    #     ReportBuilder.build_report options
-    #
-    def build_report(options = nil)
+    def build_report(opts = nil)
 
-      configure unless @options
-      @options.merge! options if options.is_a? Hash
+      options = default_options.marshal_dump unless options
+      options.merge! opts if opts.is_a? Hash
 
-      raise 'Error: Invalid report_types Use: [:json, :html]' unless @options[:report_types].is_a? Array
-      raise 'Error: Invalid report_tabs Use: [:overview, :features, :scenarios, :errors]' unless @options[:report_tabs].is_a? Array
+      raise 'Error: Invalid report_types Use: [:json, :html]' unless options[:report_types].is_a? Array
+      raise 'Error: Invalid report_tabs Use: [:overview, :features, :scenarios, :errors]' unless options[:report_tabs].is_a? Array
 
-      @options[:report_types].map!(&:to_s).map!(&:upcase)
-      @options[:report_tabs].map!(&:to_s).map!(&:downcase)
+      options[:report_types].map!(&:to_s).map!(&:upcase)
+      options[:report_tabs].map!(&:to_s).map!(&:downcase)
 
-      input = files @options[:json_path]
+      input = files options[:json_path]
       all_features = features input rescue (raise 'ReportBuilderParsingError')
 
-      File.open(@options[:report_path] + '.json', 'w') do |file|
+      File.open(options[:report_path] + '.json', 'w') do |file|
         file.write JSON.pretty_generate all_features
-        puts "JSON test report generated: '#{@options[:report_path]}.json'"
-      end if @options[:report_types].include? 'JSON'
+        puts "JSON test report generated: '#{options[:report_path]}.json'"
+      end if options[:report_types].include? 'JSON'
 
       all_scenarios = scenarios all_features
       all_steps = steps all_scenarios
@@ -73,14 +58,14 @@ module ReportBuilder
       scenario_data = data all_scenarios
       step_data = data all_steps
 
-      File.open(@options[:report_path] + '.html', 'w:UTF-8') do |file|
+      File.open(options[:report_path] + '.html', 'w:UTF-8') do |file|
         @builder = Builder::XmlMarkup.new(target: file, indent: 0)
         @builder.declare!(:DOCTYPE, :html)
         @builder << '<html>'
 
         @builder.head do
           @builder.meta(charset: 'UTF-8')
-          @builder.title @options[:report_title]
+          @builder.title options[:report_title]
 
           @builder.style(type: 'text/css') do
             @builder << File.read(File.dirname(__FILE__) + '/../vendor/assets/stylesheets/jquery-ui.min.css')
@@ -115,15 +100,15 @@ module ReportBuilder
 
         @builder.div(class: 'summary') do
           @builder.span(class: 'info') do
-            info = @options[:additional_info].empty?
+            info = options[:additional_info].empty?
             @builder << '<br/>&nbsp;&nbsp;&nbsp;' if info
             @builder.span(style: "font-size:#{info ? 36 : 18 }px;font-weight: bold;") do
-              @builder << @options[:report_title]
+              @builder << options[:report_title]
             end
-            @options[:additional_info].each do |l|
+            options[:additional_info].each do |l|
               @builder << '<br/>' + l[0].to_s.capitalize + ' : ' + l[1].to_s
             end
-          end if @options[:additional_info].is_a? Hash
+          end if options[:additional_info].is_a? Hash
           @builder.span(class: 'results') do
             s = all_features.size
             @builder << s.to_s + " feature#{'s' if s > 1} ("
@@ -145,13 +130,13 @@ module ReportBuilder
         end
 
         @builder.div(id: 'results') do
-          build_menu @options[:report_tabs]
+          build_menu options[:report_tabs]
 
           @builder.div(id: 'overviewTab') do
             @builder << "<div id='featurePieChart' style=\"float:left;width:33%\"></div>"
             @builder << "<div id='scenarioPieChart' style=\"display:inline-block;width:33%\"></div>"
             @builder << "<div id='stepPieChart' style=\"float:right;width:33%\"></div>"
-          end if @options[:report_tabs].include? 'overview'
+          end if options[:report_tabs].include? 'overview'
 
           @builder.div(id: 'featuresTab') do
             build_tags_drop_down(all_tags)
@@ -170,7 +155,7 @@ module ReportBuilder
               end
             end
             @builder << "<div id='featureTabPieChart'></div>"
-          end if @options[:report_tabs].include? 'features'
+          end if options[:report_tabs].include? 'features'
 
           @builder.div(id: 'scenariosTab') do
             build_tags_drop_down(all_tags)
@@ -189,38 +174,38 @@ module ReportBuilder
               end
             end
             @builder << "<div id='scenarioTabPieChart'></div>"
-          end if @options[:report_tabs].include? 'scenarios'
+          end if options[:report_tabs].include? 'scenarios'
 
           @builder.div(id: 'errorsTab') do
             @builder.ol do
               all_scenarios.each {|scenario| build_error_list scenario}
             end
-          end if @options[:report_tabs].include? 'errors'
+          end if options[:report_tabs].include? 'errors'
         end
 
         @builder.script(type: 'text/javascript') do
-          @builder << pie_chart_js('featurePieChart', 'Features', feature_data) if @options[:report_tabs].include? 'overview'
-          @builder << donut_js('featureTabPieChart', 'Features', feature_data) if @options[:report_tabs].include? 'features'
-          @builder << pie_chart_js('scenarioPieChart', 'Scenarios', scenario_data) if @options[:report_tabs].include? 'overview'
-          @builder << donut_js('scenarioTabPieChart', 'Scenarios', scenario_data) if @options[:report_tabs].include? 'scenarios'
-          @builder << pie_chart_js('stepPieChart', 'Steps', step_data) if @options[:report_tabs].include? 'overview'
+          @builder << pie_chart_js('featurePieChart', 'Features', feature_data) if options[:report_tabs].include? 'overview'
+          @builder << donut_js('featureTabPieChart', 'Features', feature_data) if options[:report_tabs].include? 'features'
+          @builder << pie_chart_js('scenarioPieChart', 'Scenarios', scenario_data) if options[:report_tabs].include? 'overview'
+          @builder << donut_js('scenarioTabPieChart', 'Scenarios', scenario_data) if options[:report_tabs].include? 'scenarios'
+          @builder << pie_chart_js('stepPieChart', 'Steps', step_data) if options[:report_tabs].include? 'overview'
           unless all_tags.empty?
             @builder << '$("#featuresTab .select-tags").change(function(){
                 $("#featuresTab .scenario-all").hide().next().hide().parent().hide().parent().hide().prev().hide();
-                $("#featuresTab ." + $(this).val()).show().parent().show().parent().prev().show();});' if @options[:report_tabs].include? 'features'
+                $("#featuresTab ." + $(this).val()).show().parent().show().parent().prev().show();});' if options[:report_tabs].include? 'features'
             @builder << '$("#scenariosTab .select-tags").change(function(){var val = $(this).val();$("#scenariosTab .scenario-all").hide().next().hide();
                 $("#scenariosTab ." + val).show();$("#scenariosTab #count").each(function(){status = $(this).parent().parent().prop("className");
                 count = $("#scenariosTab #" + status + " ." + val).length;countElement = $("#scenariosTab ." + status + " #count");
                 countElement.parent().parent().parent().show();if(count==0){countElement.parent().parent().parent().hide().next().hide();}
-                countElement.html(count);});});' if @options[:report_tabs].include? 'scenarios'
+                countElement.html(count);});});' if options[:report_tabs].include? 'scenarios'
           end
         end
 
         @builder << '</body>'
         @builder << '</html>'
 
-        puts "HTML test report generated: '#{@options[:report_path]}.html'"
-      end if @options[:report_types].include? 'HTML'
+        puts "HTML test report generated: '#{options[:report_path]}.html'"
+      end if options[:report_types].include? 'HTML'
 
       [total_time, feature_data, scenario_data, step_data]
     end
@@ -375,7 +360,7 @@ module ReportBuilder
                 end
               end
               @builder << '<br/>'
-              @options[:compress_images] ? build_unique_image(embedding, id) : build_image(embedding, id)
+              options[:compress_images] ? build_unique_image(embedding, id) : build_image(embedding, id)
             end
           rescue => e
             puts 'Image embedding failed!'
