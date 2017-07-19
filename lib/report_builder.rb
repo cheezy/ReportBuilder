@@ -1,7 +1,3 @@
-require 'json'
-require 'builder'
-require 'base64'
-require 'report_builder/core_ext/hash'
 require 'report_builder/builder'
 
 

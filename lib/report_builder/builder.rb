@@ -1,8 +1,13 @@
+require 'json'
+require 'builder'
+require 'base64'
+require 'report_builder/core_ext/hash'
+
 module ReportBuilder
   class Builder
 
     attr_accessor :options
-    
+
 # report_builder:
 #
 # ReportBuilder.configure do |config|
@@ -59,7 +64,7 @@ module ReportBuilder
       step_data = data all_steps
 
       File.open(options[:report_path] + '.html', 'w:UTF-8') do |file|
-        @builder = Builder::XmlMarkup.new(target: file, indent: 0)
+        @builder = ::Builder::XmlMarkup.new(target: file, indent: 0)
         @builder.declare!(:DOCTYPE, :html)
         @builder << '<html>'
 
@@ -68,7 +73,7 @@ module ReportBuilder
           @builder.title options[:report_title]
 
           @builder.style(type: 'text/css') do
-            @builder << File.read(File.dirname(__FILE__) + '/../vendor/assets/stylesheets/jquery-ui.min.css')
+            @builder << File.read(File.dirname(__FILE__) + '/../../vendor/assets/stylesheets/jquery-ui.min.css')
             COLOR.each do |color|
               @builder << ".#{color[0].to_s}{background:#{color[1]};color:#434348;padding:2px}"
             end
@@ -81,7 +86,7 @@ module ReportBuilder
 
           @builder.script(type: 'text/javascript') do
             %w(jquery-min jquery-ui.min highcharts highcharts-3d).each do |js|
-              @builder << File.read(File.dirname(__FILE__) + '/../vendor/assets/javascripts/' + js + '.js')
+              @builder << File.read(File.dirname(__FILE__) + '/../../vendor/assets/javascripts/' + js + '.js')
             end
             @builder << '$(function(){$("#results").tabs();});'
             @builder << "$(function(){$('#features').accordion({collapsible: true, heightStyle: 'content', active: false, icons: false});});"
@@ -222,87 +227,41 @@ module ReportBuilder
       )
     end
 
-    def build_menu(tabs)
-      @builder.ul do
-        tabs.each do |tab|
-          @builder.li do
-            @builder.a(href: "##{tab}Tab") do
-              @builder << tab.capitalize
-            end
+    private
+
+    def build_unique_image(image, id)
+      @images ||= []
+      index = @images.find_index image
+      if index
+        klass = "image_#{index}"
+      else
+        @images << image
+        klass = "image_#{@images.size - 1}"
+        @builder.style(type: 'text/css') do
+          begin
+            src = Base64.decode64(image['data'])
+            src = 'data:' + image['mime_type'] + ';base64,' + src unless src =~ /^data:image\/(png|gif|jpg|jpeg);base64,/
+            @builder << "img.#{klass} {content: url(#{src});}"
+          rescue
+            src = image['data']
+            src = 'data:' + image['mime_type'] + ';base64,' + src unless src =~ /^data:image\/(png|gif|jpg|jpeg);base64,/
+            @builder << "img.#{klass} {content: url(#{src});}"
           end
         end
       end
+      @builder << %{<img id='#{id}' class='#{klass}' style='display: none; border: 1px solid #{COLOR[:output]};' />}
     end
 
-    def build_scenario(scenario)
-      tags = (scenario['tags'] ? scenario['tags'].map {|tag| tag['name']}.join(' ') : '')
-      @builder.h3(style: "background:#{COLOR[scenario['status'].to_sym]}", title: tags, class: 'scenario-all ' + tags.gsub('@', 'tag-')) do
-        @builder.span(class: scenario['status']) do
-          @builder << "<strong>#{scenario['keyword']}</strong> #{scenario['name']} (#{duration(scenario['duration'])})"
-        end
+    def build_image(image, id)
+      begin
+        src = Base64.decode64(image['data'])
+        src = 'data:' + image['mime_type'] + ';base64,' + src unless src =~ /^data:image\/(png|gif|jpg|jpeg);base64,/
+        @builder << %{<img id='#{id}' style='display: none; border: 1px solid #{COLOR[:output]};' src='#{src}'/>}
+      rescue
+        src = image['data']
+        src = 'data:' + image['mime_type'] + ';base64,' + src unless src =~ /^data:image\/(png|gif|jpg|jpeg);base64,/
+        @builder << %{<img id='#{id}' style='display: none; border: 1px solid #{COLOR[:output]};' src='#{src}'/>}
       end
-      @builder.div do
-        scenario['before'].each do |before|
-          build_hook_error before
-        end
-        scenario['steps'].each do |step|
-          build_step step, scenario['keyword']
-        end
-        scenario['after'].each do |after|
-          build_output after['output']
-          build_hook_error after
-          build_embedding after['embeddings']
-        end
-      end
-    end
-
-    def build_step(step, scenario_keyword)
-      @builder.div(class: step['status']) do
-        @builder << "<strong>#{step['keyword']}</strong> #{step['name']} (#{duration(step['duration'])})"
-      end
-      build_data_table step['rows']
-      build_output step['output']
-      build_step_error step
-      build_embedding step['embeddings']
-      step['after'].each do |after|
-        build_output after['output']
-        build_step_hook_error after, scenario_keyword
-        build_embedding after['embeddings']
-      end if step['after']
-    end
-
-    def build_data_table(rows)
-      @builder.table(class: 'data_table', style: 'margin: 10px') do
-        rows.each do |row|
-          @builder.tr do
-            row['cells'].each do |cell|
-              @builder << "<td> #{cell} </td>"
-            end
-          end
-        end
-      end if rows.is_a? Array
-    end
-
-    def build_output(outputs)
-      outputs.each do |output|
-        @builder << "<span style='color:#{COLOR[:output]}'>#{output.gsub("\n", '</br>').gsub("\t", '&nbsp;&nbsp;').gsub(' ', '&nbsp;')}</span><br/>"
-      end if outputs.is_a?(Array)
-    end
-
-    def build_tags_drop_down(tags)
-      @builder.div(style: 'text-align:center;padding:5px;') do
-        @builder << '<strong>Tag: </strong>'
-        @builder.select(class: 'select-tags') do
-          @builder.option(value: 'scenario-all') do
-            @builder << 'All'
-          end
-          tags.sort.each do |tag|
-            @builder.option(value: tag.gsub('@', 'tag-')) do
-              @builder << tag
-            end
-          end
-        end
-      end if tags.is_a?(Array)
     end
 
     def build_step_error(step)
@@ -343,88 +302,6 @@ module ReportBuilder
         end
         @builder << "<strong>Hook: </strong>#{scenario_keyword == 'Scenario Outline' ? error[-7] : error[-4]} <br/>"
         @builder << "<strong>FF: </strong>#{error[-2]}<br/>"
-      end
-    end
-
-    def build_embedding(embeddings)
-      @embedding_count ||= 0
-      embeddings.each do |embedding|
-        src = Base64.decode64(embedding['data'])
-        id = "embedding_#{@embedding_count}"
-        if embedding['mime_type'] =~ /^image\/(png|gif|jpg|jpeg)/
-          begin
-            @builder.span(class: 'image') do
-              @builder.a(href: '', style: 'text-decoration: none;', onclick: "img=document.getElementById('#{id}');img.style.display = (img.style.display == 'none' ? 'block' : 'none');return false") do
-                @builder.span(style: "color: #{COLOR[:output]}; font-weight: bold; border-bottom: 1px solid #{COLOR[:output]};") do
-                  @builder << "Screenshot ##{@embedding_count}"
-                end
-              end
-              @builder << '<br/>'
-              options[:compress_images] ? build_unique_image(embedding, id) : build_image(embedding, id)
-            end
-          rescue => e
-            puts 'Image embedding failed!'
-            puts [e.class, e.message, e.backtrace[0..10].join("\n")].join("\n")
-          end
-        elsif embedding['mime_type'] =~ /^text\/plain/
-          begin
-            if src.include?('|||')
-              title, link = src.split('|||')
-              @builder.span(class: 'link') do
-                @builder.a(id: id, style: 'text-decoration: none;', href: link, title: title) do
-                  @builder.span(style: "color: #{COLOR[:output]}; font-weight: bold; border-bottom: 1px solid #{COLOR[:output]};") do
-                    @builder << title
-                  end
-                end
-                @builder << '<br/>'
-              end
-            else
-              @builder.span(class: 'info') do
-                @builder << src
-                @builder << '<br/>'
-              end
-            end
-          rescue => e
-            puts('Link embedding skipped!')
-            puts [e.class, e.message, e.backtrace[0..10].join("\n")].join("\n")
-          end
-        end
-        @embedding_count += 1
-      end if embeddings.is_a?(Array)
-    end
-
-    def build_unique_image(image, id)
-      @images ||= []
-      index = @images.find_index image
-      if index
-        klass = "image_#{index}"
-      else
-        @images << image
-        klass = "image_#{@images.size - 1}"
-        @builder.style(type: 'text/css') do
-          begin
-            src = Base64.decode64(image['data'])
-            src = 'data:' + image['mime_type'] + ';base64,' + src unless src =~ /^data:image\/(png|gif|jpg|jpeg);base64,/
-            @builder << "img.#{klass} {content: url(#{src});}"
-          rescue
-            src = image['data']
-            src = 'data:' + image['mime_type'] + ';base64,' + src unless src =~ /^data:image\/(png|gif|jpg|jpeg);base64,/
-            @builder << "img.#{klass} {content: url(#{src});}"
-          end
-        end
-      end
-      @builder << %{<img id='#{id}' class='#{klass}' style='display: none; border: 1px solid #{COLOR[:output]};' />}
-    end
-
-    def build_image(image, id)
-      begin
-        src = Base64.decode64(image['data'])
-        src = 'data:' + image['mime_type'] + ';base64,' + src unless src =~ /^data:image\/(png|gif|jpg|jpeg);base64,/
-        @builder << %{<img id='#{id}' style='display: none; border: 1px solid #{COLOR[:output]};' src='#{src}'/>}
-      rescue
-        src = image['data']
-        src = 'data:' + image['mime_type'] + ';base64,' + src unless src =~ /^data:image\/(png|gif|jpg|jpeg);base64,/
-        @builder << %{<img id='#{id}' style='display: none; border: 1px solid #{COLOR[:output]};' src='#{src}'/>}
       end
     end
 
@@ -481,6 +358,108 @@ module ReportBuilder
           @builder << "<strong>Scenario: </strong>#{scenario['name']} <br/><hr/>"
         end
       end
+    end
+
+    def build_embedding(embeddings)
+      @embedding_count ||= 0
+      embeddings.each do |embedding|
+        src = Base64.decode64(embedding['data'])
+        id = "embedding_#{@embedding_count}"
+        if embedding['mime_type'] =~ /^image\/(png|gif|jpg|jpeg)/
+          begin
+            @builder.span(class: 'image') do
+              @builder.a(href: '', style: 'text-decoration: none;', onclick: "img=document.getElementById('#{id}');img.style.display = (img.style.display == 'none' ? 'block' : 'none');return false") do
+                @builder.span(style: "color: #{COLOR[:output]}; font-weight: bold; border-bottom: 1px solid #{COLOR[:output]};") do
+                  @builder << "Screenshot ##{@embedding_count}"
+                end
+              end
+              @builder << '<br/>'
+              options[:compress_images] ? build_unique_image(embedding, id) : build_image(embedding, id)
+            end
+          rescue => e
+            puts 'Image embedding failed!'
+            puts [e.class, e.message, e.backtrace[0..10].join("\n")].join("\n")
+          end
+        elsif embedding['mime_type'] =~ /^text\/plain/
+          begin
+            if src.include?('|||')
+              title, link = src.split('|||')
+              @builder.span(class: 'link') do
+                @builder.a(id: id, style: 'text-decoration: none;', href: link, title: title) do
+                  @builder.span(style: "color: #{COLOR[:output]}; font-weight: bold; border-bottom: 1px solid #{COLOR[:output]};") do
+                    @builder << title
+                  end
+                end
+                @builder << '<br/>'
+              end
+            else
+              @builder.span(class: 'info') do
+                @builder << src
+                @builder << '<br/>'
+              end
+            end
+          rescue => e
+            puts('Link embedding skipped!')
+            puts [e.class, e.message, e.backtrace[0..10].join("\n")].join("\n")
+          end
+        end
+        @embedding_count += 1
+      end if embeddings.is_a?(Array)
+    end
+
+    def build_output(outputs)
+      outputs.each do |output|
+        @builder << "<span style='color:#{COLOR[:output]}'>#{output.gsub("\n", '</br>').gsub("\t", '&nbsp;&nbsp;').gsub(' ', '&nbsp;')}</span><br/>"
+      end if outputs.is_a?(Array)
+    end
+
+    def build_menu(tabs)
+      @builder.ul do
+        tabs.each do |tab|
+          @builder.li do
+            @builder.a(href: "##{tab}Tab") do
+              @builder << tab.capitalize
+            end
+          end
+        end
+      end
+    end
+
+    def build_scenario(scenario)
+      tags = (scenario['tags'] ? scenario['tags'].map {|tag| tag['name']}.join(' ') : '')
+      @builder.h3(style: "background:#{COLOR[scenario['status'].to_sym]}", title: tags, class: 'scenario-all ' + tags.gsub('@', 'tag-')) do
+        @builder.span(class: scenario['status']) do
+          @builder << "<strong>#{scenario['keyword']}</strong> #{scenario['name']} (#{duration(scenario['duration'])})"
+        end
+      end
+      @builder.div do
+        scenario['before'].each do |before|
+          build_hook_error before
+        end
+        scenario['steps'].each do |step|
+          build_step step, scenario['keyword']
+        end
+        scenario['after'].each do |after|
+          build_output after['output']
+          build_hook_error after
+          build_embedding after['embeddings']
+        end
+      end
+    end
+
+    def build_step(step, scenario_keyword)
+      @builder.div(class: step['status']) do
+        @builder << "<strong>#{step['keyword']}</strong> #{step['name']} (#{duration(step['duration'])})"
+      end
+      build_data_table step['rows']
+      build_output step['output']
+      build_step_error step
+      build_embedding step['embeddings']
+      step['after'].each do |after|
+        build_output after['output']
+        build_step_hook_error after, scenario_keyword
+        build_embedding after['embeddings']
+      end if step['after']
     end
 
     def features(files)
@@ -562,12 +541,6 @@ module ReportBuilder
       end.flatten
     end
 
-    def tags(scenarios)
-      scenarios.map do |scenario|
-        scenario['tags'] ? scenario['tags'].map {|t| t['name']} : []
-      end.flatten.uniq
-    end
-
     def files(path)
       files = if path.is_a? String
                 (path =~ /\.json$/) ? [path] : Dir.glob("#{path}/*.json")
@@ -582,26 +555,6 @@ module ReportBuilder
               end
       raise 'InvalidOrNoInputFile' if files.empty?
       files.uniq
-    end
-
-    def data(all_data)
-      all_data.group_by {|db| db['status']}.map do |data|
-        {name: data[0],
-         count: data[1].size,
-         color: COLOR[data[0].to_sym]}
-      end
-    end
-
-    def total_time(data)
-      total_time = 0
-      data.each {|item| total_time += item['duration']}
-      total_time
-    end
-
-    def duration(seconds)
-      seconds = seconds.to_f/1000000000
-      m, s = seconds.divmod(60)
-      "#{m}m #{'%.3f' % s}s"
     end
 
     def pie_chart_js(id, title, data)
@@ -639,16 +592,60 @@ module ReportBuilder
      series: [{type: 'pie', innerSize: '50%', name: 'Results', data: [#{data}]}]});});"
     end
 
-    private_class_method :donut_js, :pie_chart_js, :files,
-                         :features, :feature_status,
-                         :scenarios, :scenario_status, :steps,
-                         :data, :duration, :total_time,
-                         :build_scenario, :build_step,
-                         :build_menu, :build_output, :build_embedding,
-                         :build_error_list, :build_step_error,
-                         :build_hook_error, :build_step_hook_error,
-                         :build_unique_image, :build_image,
-                         :build_data_table, :tags, :build_tags_drop_down
+    def data(all_data)
+      all_data.group_by {|db| db['status']}.map do |data|
+        {name: data[0],
+         count: data[1].size,
+         color: COLOR[data[0].to_sym]}
+      end
+    end
+
+    def total_time(data)
+      total_time = 0
+      data.each {|item| total_time += item['duration']}
+      total_time
+    end
+
+    def duration(seconds)
+      seconds = seconds.to_f/1000000000
+      m, s = seconds.divmod(60)
+      "#{m}m #{'%.3f' % s}s"
+    end
+
+    def build_data_table(rows)
+      @builder.table(class: 'data_table', style: 'margin: 10px') do
+        rows.each do |row|
+          @builder.tr do
+            row['cells'].each do |cell|
+              @builder << "<td> #{cell} </td>"
+            end
+          end
+        end
+      end if rows.is_a? Array
+    end
+
+    def build_tags_drop_down(tags)
+      @builder.div(style: 'text-align:center;padding:5px;') do
+        @builder << '<strong>Tag: </strong>'
+        @builder.select(class: 'select-tags') do
+          @builder.option(value: 'scenario-all') do
+            @builder << 'All'
+          end
+          tags.sort.each do |tag|
+            @builder.option(value: tag.gsub('@', 'tag-')) do
+              @builder << tag
+            end
+          end
+        end
+      end if tags.is_a?(Array)
+    end
+
+    def tags(scenarios)
+      scenarios.map do |scenario|
+        scenario['tags'] ? scenario['tags'].map {|t| t['name']} : []
+      end.flatten.uniq
+    end
+
   end
 
 end
