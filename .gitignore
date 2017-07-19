@@ -4,3 +4,5 @@
 temp/
 Gemfile.lock
 pkg/
+junit_reports/
+results/

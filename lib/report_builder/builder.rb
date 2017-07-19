@@ -49,12 +49,6 @@ module ReportBuilder
 
       input = files options[:json_path]
       all_features = features input rescue (raise 'ReportBuilderParsingError')
-
-      File.open(options[:report_path] + '.json', 'w') do |file|
-        file.write JSON.pretty_generate all_features
-        puts "JSON test report generated: '#{options[:report_path]}.json'"
-      end if options[:report_types].include? 'JSON'
-
       all_scenarios = scenarios all_features
       all_steps = steps all_scenarios
       all_tags = tags all_scenarios
@@ -62,156 +56,165 @@ module ReportBuilder
       feature_data = data all_features
       scenario_data = data all_scenarios
       step_data = data all_steps
+      
+      if options[:report_types].include? 'JSON'
+        File.open(options[:report_path] + '.json', 'w') do |file|
+          file.write JSON.pretty_generate all_features
+          puts "JSON test report generated: '#{options[:report_path]}.json'"
+        end
+      end
 
-      File.open(options[:report_path] + '.html', 'w:UTF-8') do |file|
-        @builder = ::Builder::XmlMarkup.new(target: file, indent: 0)
-        @builder.declare!(:DOCTYPE, :html)
-        @builder << '<html>'
+      if options[:report_types].include? 'HTML'
+        File.open(options[:report_path] + '.html', 'w:UTF-8') do |file|
+          @builder = ::Builder::XmlMarkup.new(target: file, indent: 0)
+          @builder.declare!(:DOCTYPE, :html)
+          @builder << '<html>'
 
-        @builder.head do
-          @builder.meta(charset: 'UTF-8')
-          @builder.title options[:report_title]
+          @builder.head do
+            @builder.meta(charset: 'UTF-8')
+            @builder.title options[:report_title]
 
-          @builder.style(type: 'text/css') do
-            @builder << File.read(File.dirname(__FILE__) + '/../../vendor/assets/stylesheets/jquery-ui.min.css')
-            COLOR.each do |color|
-              @builder << ".#{color[0].to_s}{background:#{color[1]};color:#434348;padding:2px}"
+            @builder.style(type: 'text/css') do
+              @builder << File.read(File.dirname(__FILE__) + '/../../vendor/assets/stylesheets/jquery-ui.min.css')
+              COLOR.each do |color|
+                @builder << ".#{color[0].to_s}{background:#{color[1]};color:#434348;padding:2px}"
+              end
+              @builder << '.summary{margin-bottom:4px;border: 1px solid #c5c5c5;border-radius:4px;background:#f1f1f1;color:#434348;padding:4px;overflow:hidden;vertical-align:bottom;}'
+              @builder << '.summary .results{text-align:right;float:right;}'
+              @builder << '.summary .info{text-align:left;float:left;}'
+              @builder << '.data_table{border-collapse: collapse;} .data_table td{padding: 5px; border: 1px solid #ddd;}'
+              @builder << '.ui-tooltip{background: black; color: white; font-size: 12px; padding: 2px 4px; border-radius: 20px; box-shadow: 0 0 7px black;}'
             end
-            @builder << '.summary{margin-bottom:4px;border: 1px solid #c5c5c5;border-radius:4px;background:#f1f1f1;color:#434348;padding:4px;overflow:hidden;vertical-align:bottom;}'
-            @builder << '.summary .results{text-align:right;float:right;}'
-            @builder << '.summary .info{text-align:left;float:left;}'
-            @builder << '.data_table{border-collapse: collapse;} .data_table td{padding: 5px; border: 1px solid #ddd;}'
-            @builder << '.ui-tooltip{background: black; color: white; font-size: 12px; padding: 2px 4px; border-radius: 20px; box-shadow: 0 0 7px black;}'
+
+            @builder.script(type: 'text/javascript') do
+              %w(jquery-min jquery-ui.min highcharts highcharts-3d).each do |js|
+                @builder << File.read(File.dirname(__FILE__) + '/../../vendor/assets/javascripts/' + js + '.js')
+              end
+              @builder << '$(function(){$("#results").tabs();});'
+              @builder << "$(function(){$('#features').accordion({collapsible: true, heightStyle: 'content', active: false, icons: false});});"
+              (0..all_features.size).each do |n|
+                @builder << "$(function(){$('#feature#{n}').accordion({collapsible: true, heightStyle: 'content', active: false, icons: false});});"
+              end
+              @builder << "$(function(){$('#status').accordion({collapsible: true, heightStyle: 'content', active: false, icons: false});});"
+              scenario_data.each do |data|
+                @builder << "$(function(){$('##{data[:name]}').accordion({collapsible: true, heightStyle: 'content', active: false, icons: false});});"
+              end
+              @builder << '$(function() {$(document).tooltip({track: true});});'
+            end
+          end
+
+          @builder << '<body>'
+
+          @builder.div(class: 'summary') do
+            @builder.span(class: 'info') do
+              info = options[:additional_info].empty?
+              @builder << '<br/>&nbsp;&nbsp;&nbsp;' if info
+              @builder.span(style: "font-size:#{info ? 36 : 18 }px;font-weight: bold;") do
+                @builder << options[:report_title]
+              end
+              options[:additional_info].each do |l|
+                @builder << '<br/>' + l[0].to_s.capitalize + ' : ' + l[1].to_s
+              end
+            end if options[:additional_info].is_a? Hash
+            @builder.span(class: 'results') do
+              s = all_features.size
+              @builder << s.to_s + " feature#{'s' if s > 1} ("
+              feature_data.each do |data|
+                @builder << ' ' + data[:count].to_s + ' ' + data[:name]
+              end
+              s = all_scenarios.size
+              @builder << ')<br/>' + s.to_s + " scenario#{'s' if s > 1} ("
+              scenario_data.each do |data|
+                @builder << ' ' + data[:count].to_s + ' ' + data[:name]
+              end
+              s = all_steps.size
+              @builder << ')<br/>' + s.to_s + " step#{'s' if s > 1} ("
+              step_data.each do |data|
+                @builder << ' ' + data[:count].to_s + ' ' + data[:name]
+              end
+              @builder << ')<br/>&#128336; ' + duration(total_time).to_s
+            end
+          end
+
+          @builder.div(id: 'results') do
+            build_menu options[:report_tabs]
+
+            @builder.div(id: 'overviewTab') do
+              @builder << "<div id='featurePieChart' style=\"float:left;width:33%\"></div>"
+              @builder << "<div id='scenarioPieChart' style=\"display:inline-block;width:33%\"></div>"
+              @builder << "<div id='stepPieChart' style=\"float:right;width:33%\"></div>"
+            end if options[:report_tabs].include? 'overview'
+
+            @builder.div(id: 'featuresTab') do
+              build_tags_drop_down(all_tags)
+              @builder.div(id: 'features') do
+                all_features.each_with_index do |feature, n|
+                  @builder.h3(style: "background:#{COLOR[feature['status'].to_sym]}") do
+                    @builder.span(class: feature['status']) do
+                      @builder << "<strong>#{feature['keyword']}</strong> #{feature['name']} (#{duration(feature['duration'])})"
+                    end
+                  end
+                  @builder.div do
+                    @builder.div(id: "feature#{n}") do
+                      feature['elements'].each {|scenario| build_scenario scenario}
+                    end
+                  end
+                end
+              end
+              @builder << "<div id='featureTabPieChart'></div>"
+            end if options[:report_tabs].include? 'features'
+
+            @builder.div(id: 'scenariosTab') do
+              build_tags_drop_down(all_tags)
+              @builder.div(id: 'status') do
+                all_scenarios.group_by {|scenario| scenario['status']}.each do |data|
+                  @builder.h3(style: "background:#{COLOR[data[0].to_sym]}") do
+                    @builder.span(class: data[0]) do
+                      @builder << "<strong>#{data[0].capitalize} scenarios (Count: <span id='count'>#{data[1].size}</span>)</strong>"
+                    end
+                  end
+                  @builder.div do
+                    @builder.div(id: data[0]) do
+                      data[1].sort_by {|scenario| scenario['name']}.each {|scenario| build_scenario scenario}
+                    end
+                  end
+                end
+              end
+              @builder << "<div id='scenarioTabPieChart'></div>"
+            end if options[:report_tabs].include? 'scenarios'
+
+            @builder.div(id: 'errorsTab') do
+              @builder.ol do
+                all_scenarios.each {|scenario| build_error_list scenario}
+              end
+            end if options[:report_tabs].include? 'errors'
           end
 
           @builder.script(type: 'text/javascript') do
-            %w(jquery-min jquery-ui.min highcharts highcharts-3d).each do |js|
-              @builder << File.read(File.dirname(__FILE__) + '/../../vendor/assets/javascripts/' + js + '.js')
-            end
-            @builder << '$(function(){$("#results").tabs();});'
-            @builder << "$(function(){$('#features').accordion({collapsible: true, heightStyle: 'content', active: false, icons: false});});"
-            (0..all_features.size).each do |n|
-              @builder << "$(function(){$('#feature#{n}').accordion({collapsible: true, heightStyle: 'content', active: false, icons: false});});"
-            end
-            @builder << "$(function(){$('#status').accordion({collapsible: true, heightStyle: 'content', active: false, icons: false});});"
-            scenario_data.each do |data|
-              @builder << "$(function(){$('##{data[:name]}').accordion({collapsible: true, heightStyle: 'content', active: false, icons: false});});"
-            end
-            @builder << '$(function() {$(document).tooltip({track: true});});'
-          end
-        end
-
-        @builder << '<body>'
-
-        @builder.div(class: 'summary') do
-          @builder.span(class: 'info') do
-            info = options[:additional_info].empty?
-            @builder << '<br/>&nbsp;&nbsp;&nbsp;' if info
-            @builder.span(style: "font-size:#{info ? 36 : 18 }px;font-weight: bold;") do
-              @builder << options[:report_title]
-            end
-            options[:additional_info].each do |l|
-              @builder << '<br/>' + l[0].to_s.capitalize + ' : ' + l[1].to_s
-            end
-          end if options[:additional_info].is_a? Hash
-          @builder.span(class: 'results') do
-            s = all_features.size
-            @builder << s.to_s + " feature#{'s' if s > 1} ("
-            feature_data.each do |data|
-              @builder << ' ' + data[:count].to_s + ' ' + data[:name]
-            end
-            s = all_scenarios.size
-            @builder << ')<br/>' + s.to_s + " scenario#{'s' if s > 1} ("
-            scenario_data.each do |data|
-              @builder << ' ' + data[:count].to_s + ' ' + data[:name]
-            end
-            s = all_steps.size
-            @builder << ')<br/>' + s.to_s + " step#{'s' if s > 1} ("
-            step_data.each do |data|
-              @builder << ' ' + data[:count].to_s + ' ' + data[:name]
-            end
-            @builder << ')<br/>&#128336; ' + duration(total_time).to_s
-          end
-        end
-
-        @builder.div(id: 'results') do
-          build_menu options[:report_tabs]
-
-          @builder.div(id: 'overviewTab') do
-            @builder << "<div id='featurePieChart' style=\"float:left;width:33%\"></div>"
-            @builder << "<div id='scenarioPieChart' style=\"display:inline-block;width:33%\"></div>"
-            @builder << "<div id='stepPieChart' style=\"float:right;width:33%\"></div>"
-          end if options[:report_tabs].include? 'overview'
-
-          @builder.div(id: 'featuresTab') do
-            build_tags_drop_down(all_tags)
-            @builder.div(id: 'features') do
-              all_features.each_with_index do |feature, n|
-                @builder.h3(style: "background:#{COLOR[feature['status'].to_sym]}") do
-                  @builder.span(class: feature['status']) do
-                    @builder << "<strong>#{feature['keyword']}</strong> #{feature['name']} (#{duration(feature['duration'])})"
-                  end
-                end
-                @builder.div do
-                  @builder.div(id: "feature#{n}") do
-                    feature['elements'].each {|scenario| build_scenario scenario}
-                  end
-                end
-              end
-            end
-            @builder << "<div id='featureTabPieChart'></div>"
-          end if options[:report_tabs].include? 'features'
-
-          @builder.div(id: 'scenariosTab') do
-            build_tags_drop_down(all_tags)
-            @builder.div(id: 'status') do
-              all_scenarios.group_by {|scenario| scenario['status']}.each do |data|
-                @builder.h3(style: "background:#{COLOR[data[0].to_sym]}") do
-                  @builder.span(class: data[0]) do
-                    @builder << "<strong>#{data[0].capitalize} scenarios (Count: <span id='count'>#{data[1].size}</span>)</strong>"
-                  end
-                end
-                @builder.div do
-                  @builder.div(id: data[0]) do
-                    data[1].sort_by {|scenario| scenario['name']}.each {|scenario| build_scenario scenario}
-                  end
-                end
-              end
-            end
-            @builder << "<div id='scenarioTabPieChart'></div>"
-          end if options[:report_tabs].include? 'scenarios'
-
-          @builder.div(id: 'errorsTab') do
-            @builder.ol do
-              all_scenarios.each {|scenario| build_error_list scenario}
-            end
-          end if options[:report_tabs].include? 'errors'
-        end
-
-        @builder.script(type: 'text/javascript') do
-          @builder << pie_chart_js('featurePieChart', 'Features', feature_data) if options[:report_tabs].include? 'overview'
-          @builder << donut_js('featureTabPieChart', 'Features', feature_data) if options[:report_tabs].include? 'features'
-          @builder << pie_chart_js('scenarioPieChart', 'Scenarios', scenario_data) if options[:report_tabs].include? 'overview'
-          @builder << donut_js('scenarioTabPieChart', 'Scenarios', scenario_data) if options[:report_tabs].include? 'scenarios'
-          @builder << pie_chart_js('stepPieChart', 'Steps', step_data) if options[:report_tabs].include? 'overview'
-          unless all_tags.empty?
-            @builder << '$("#featuresTab .select-tags").change(function(){
+            @builder << pie_chart_js('featurePieChart', 'Features', feature_data) if options[:report_tabs].include? 'overview'
+            @builder << donut_js('featureTabPieChart', 'Features', feature_data) if options[:report_tabs].include? 'features'
+            @builder << pie_chart_js('scenarioPieChart', 'Scenarios', scenario_data) if options[:report_tabs].include? 'overview'
+            @builder << donut_js('scenarioTabPieChart', 'Scenarios', scenario_data) if options[:report_tabs].include? 'scenarios'
+            @builder << pie_chart_js('stepPieChart', 'Steps', step_data) if options[:report_tabs].include? 'overview'
+            unless all_tags.empty?
+              @builder << '$("#featuresTab .select-tags").change(function(){
                 $("#featuresTab .scenario-all").hide().next().hide().parent().hide().parent().hide().prev().hide();
                 $("#featuresTab ." + $(this).val()).show().parent().show().parent().prev().show();});' if options[:report_tabs].include? 'features'
-            @builder << '$("#scenariosTab .select-tags").change(function(){var val = $(this).val();$("#scenariosTab .scenario-all").hide().next().hide();
+              @builder << '$("#scenariosTab .select-tags").change(function(){var val = $(this).val();$("#scenariosTab .scenario-all").hide().next().hide();
                 $("#scenariosTab ." + val).show();$("#scenariosTab #count").each(function(){status = $(this).parent().parent().prop("className");
                 count = $("#scenariosTab #" + status + " ." + val).length;countElement = $("#scenariosTab ." + status + " #count");
                 countElement.parent().parent().parent().show();if(count==0){countElement.parent().parent().parent().hide().next().hide();}
                 countElement.html(count);});});' if options[:report_tabs].include? 'scenarios'
+            end
           end
+
+          @builder << '</body>'
+          @builder << '</html>'
+
+          puts "HTML test report generated: '#{options[:report_path]}.html'"
         end
 
-        @builder << '</body>'
-        @builder << '</html>'
-
-        puts "HTML test report generated: '#{options[:report_path]}.html'"
-      end if options[:report_types].include? 'HTML'
-
+      end
       [total_time, feature_data, scenario_data, step_data]
     end
 
